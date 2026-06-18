@@ -38,15 +38,14 @@ async function fetchVideoMeta(videoId: string): Promise<VideoMeta> {
   return { title: data.title, channel: data.author_name, thumbnail: data.thumbnail_url }
 }
 
-// Build minimal protobuf params for the get_transcript endpoint
-// Field 1 (wire type 2): videoId string
+// Build nested protobuf params for the get_transcript endpoint
+// Structure: outer(field1 → middle(field2 → inner(field1 → videoId)))
 function buildTranscriptParams(videoId: string): string {
-  const idBytes = Buffer.from(videoId, 'utf8')
-  const buf = Buffer.concat([
-    Buffer.from([0x0a, idBytes.length]),
-    idBytes,
-  ])
-  return buf.toString('base64')
+  const idBuf = Buffer.from(videoId, 'utf8')
+  const inner  = Buffer.concat([Buffer.from([0x0a, idBuf.length]),   idBuf])
+  const middle = Buffer.concat([Buffer.from([0x12, inner.length]),   inner])
+  const outer  = Buffer.concat([Buffer.from([0x0a, middle.length]),  middle])
+  return outer.toString('base64')
 }
 
 // Use YouTube's internal get_transcript API (same endpoint the web player uses)
