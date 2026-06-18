@@ -60,6 +60,12 @@ const ERROR_CONFIG: Record<
     hint: 'Could not reach the server. Check your internet connection and try again.',
     retryable: true,
   },
+  METHOD_NOT_ALLOWED: {
+    icon: AlertCircle,
+    title: 'Request not allowed',
+    hint: 'An invalid request was made. Please try again.',
+    retryable: false,
+  },
 }
 
 // ── AI sidebar data ───────────────────────────────────────────────────────────
