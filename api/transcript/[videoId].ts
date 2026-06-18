@@ -15,18 +15,15 @@ interface VideoMeta {
   thumbnail: string
 }
 
-// Headers that mimic a real browser — needed to get captions from datacenter IPs
-const BASE_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Accept': '*/*',
-  'Cookie': 'SOCS=CAESEwgDEgk0OTI5MzA1NjUaAmVuIAEaBgiAo_CmBg==; CONSENT=YES+cb; PREF=hl=en&gl=US',
-}
+const SUPADATA_API_KEY = process.env.SUPADATA_API_KEY ?? ''
 
 async function fetchVideoMeta(videoId: string): Promise<VideoMeta> {
   const res = await fetch(
     `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
-    { headers: { 'User-Agent': BASE_HEADERS['User-Agent'] }, signal: AbortSignal.timeout(8_000) }
+    {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(8_000),
+    }
   )
   if (res.status === 404 || res.status === 400) {
     throw Object.assign(new Error('Video not found'), { code: 'VIDEO_NOT_FOUND' })
@@ -36,96 +33,43 @@ async function fetchVideoMeta(videoId: string): Promise<VideoMeta> {
   return { title: d.title, channel: d.author_name, thumbnail: d.thumbnail_url }
 }
 
-// Use YouTube's internal player API to get caption tracks
-// TVHTML5_SIMPLY_EMBEDDED_PLAYER (embed client) has fewer IP restrictions than WEB client
-async function fetchCaptionTracks(videoId: string): Promise<Array<{ baseUrl: string; languageCode: string; kind?: string }>> {
-  const res = await fetch('https://www.youtube.com/youtubei/v1/player', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': BASE_HEADERS['User-Agent'],
-      'X-YouTube-Client-Name': '85',
-      'X-YouTube-Client-Version': '2.0',
-      'Origin': 'https://www.youtube.com',
-    },
-    body: JSON.stringify({
-      videoId,
-      context: {
-        client: {
-          clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-          clientVersion: '2.0',
-          hl: 'en',
-          gl: 'US',
-        },
-        thirdParty: {
-          embedUrl: 'https://www.youtube.com/',
-        },
+async function fetchTranscriptFromSupadata(videoId: string): Promise<TranscriptSegment[]> {
+  const res = await fetch(
+    `https://api.supadata.ai/v1/youtube/transcript?videoId=${videoId}`,
+    {
+      headers: {
+        'x-api-key': SUPADATA_API_KEY,
+        'Accept': 'application/json',
       },
-    }),
-    signal: AbortSignal.timeout(15_000),
-  })
+      signal: AbortSignal.timeout(20_000),
+    }
+  )
 
-  if (!res.ok) throw Object.assign(new Error(`player API ${res.status}`), { code: 'INTERNAL_ERROR' })
+  if (res.status === 404) {
+    throw Object.assign(new Error('No transcript'), { code: 'NO_TRANSCRIPT' })
+  }
+  if (res.status === 429) {
+    throw Object.assign(new Error('Rate limited'), { code: 'RATE_LIMITED' })
+  }
+  if (!res.ok) {
+    const body = await res.text()
+    throw Object.assign(new Error(`Supadata ${res.status}: ${body}`), { code: 'INTERNAL_ERROR' })
+  }
 
   const data = await res.json() as {
-    captions?: {
-      playerCaptionsTracklistRenderer?: {
-        captionTracks?: Array<{ baseUrl: string; languageCode: string; kind?: string }>
-      }
-    }
-    playabilityStatus?: { status: string }
+    content?: Array<{ text: string; offset: number; duration: number }>
   }
 
-  const status = data.playabilityStatus?.status
-  if (status === 'LOGIN_REQUIRED' || status === 'UNPLAYABLE') {
-    throw Object.assign(new Error('Video not playable'), { code: 'VIDEO_NOT_FOUND' })
+  const content = data.content
+  if (!content || content.length === 0) {
+    throw Object.assign(new Error('Empty transcript'), { code: 'NO_TRANSCRIPT' })
   }
 
-  const tracks = data.captions?.playerCaptionsTracklistRenderer?.captionTracks
-  if (!tracks || tracks.length === 0) {
-    throw Object.assign(new Error('No caption tracks'), { code: 'NO_TRANSCRIPT' })
-  }
-
-  return tracks
-}
-
-function pickBestTrack(tracks: Array<{ baseUrl: string; languageCode: string; kind?: string }>) {
-  return (
-    tracks.find(t => t.languageCode === 'en' && t.kind !== 'asr') ||   // manual English
-    tracks.find(t => t.languageCode === 'en') ||                        // auto English
-    tracks.find(t => t.languageCode.startsWith('en')) ||               // any English variant
-    tracks[0]                                                           // first available
-  )
-}
-
-async function fetchSegmentsFromUrl(captionUrl: string): Promise<TranscriptSegment[]> {
-  const res = await fetch(captionUrl, {
-    headers: BASE_HEADERS,
-    signal: AbortSignal.timeout(10_000),
-  })
-  if (!res.ok) throw Object.assign(new Error(`caption fetch ${res.status}`), { code: 'INTERNAL_ERROR' })
-
-  const xml = await res.text()
-  const segments: TranscriptSegment[] = []
-  const re = /<text\s+start="([\d.]+)"\s+dur="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g
-  let m: RegExpExecArray | null
-
-  while ((m = re.exec(xml)) !== null) {
-    const text = m[3]
-      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/<[^>]+>/g, '')
-      .trim()
-    if (text) {
-      segments.push({
-        text,
-        offset: Math.round(parseFloat(m[1]) * 1000),
-        duration: Math.round(parseFloat(m[2]) * 1000),
-      })
-    }
-  }
-
-  if (segments.length === 0) throw Object.assign(new Error('Empty captions'), { code: 'NO_TRANSCRIPT' })
-  return segments
+  return content.map(seg => ({
+    text: seg.text.trim(),
+    offset: Math.round(seg.offset),
+    duration: Math.round(seg.duration),
+  }))
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -152,14 +96,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   let segments: TranscriptSegment[]
   try {
-    const tracks = await fetchCaptionTracks(videoId)
-    const track = pickBestTrack(tracks)
-    segments = await fetchSegmentsFromUrl(track.baseUrl)
+    segments = await fetchTranscriptFromSupadata(videoId)
   } catch (err: unknown) {
     const e = err as { code?: string; message?: string }
-    console.error('[transcript] error:', e.message)
+    console.error('[transcript] supadata error:', e.message)
     if (e.code === 'NO_TRANSCRIPT') return sendError(res, 'NO_TRANSCRIPT', 'This video does not have a transcript available.')
-    if (e.code === 'VIDEO_NOT_FOUND') return sendError(res, 'VIDEO_NOT_FOUND', 'Video not found or is private.')
+    if (e.code === 'RATE_LIMITED') return sendError(res, 'RATE_LIMITED', 'Too many requests. Please wait and try again.')
     return sendError(res, 'INTERNAL_ERROR', 'Failed to fetch transcript. Please try again.')
   }
 
