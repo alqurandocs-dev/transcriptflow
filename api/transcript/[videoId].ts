@@ -258,7 +258,7 @@ async function method7_supadata(videoId: string): Promise<TranscriptSegment[]> {
 // ─── Orchestrator ─────────────────────────────────────────────────────────────
 
 async function fetchTranscript(videoId: string): Promise<TranscriptSegment[]> {
-  // Step 1: Free methods in parallel (unlimited)
+  // Step 1: Free methods in parallel — fastest wins
   try {
     const result = await Promise.any([
       method1_youtubeTranscript(videoId),
@@ -267,54 +267,28 @@ async function fetchTranscript(videoId: string): Promise<TranscriptSegment[]> {
     console.log('[transcript] free method succeeded')
     return result
   } catch {
-    console.log('[transcript] free methods failed, trying RapidAPI')
+    console.log('[transcript] free methods failed, trying RapidAPI (parallel)')
   }
 
-  // Step 2: RapidAPI youtube-transcript3 (500/month)
+  // Step 2: All RapidAPI methods in parallel — fastest wins
   try {
-    const result = await method3_rapidapi(videoId)
-    console.log('[transcript] RapidAPI succeeded')
+    const result = await Promise.any([
+      method3_rapidapi(videoId),
+      method4_captionsApi(videoId),
+      method5_summarizer(videoId),
+      method6_transcriptor(videoId),
+    ])
+    console.log('[transcript] RapidAPI method succeeded')
     return result
   } catch (err) {
-    const e = err as { code?: string }
-    if (e.code === 'NO_TRANSCRIPT') throw err
-    console.log('[transcript] RapidAPI failed, trying CaptionsAPI')
+    // If ALL threw NO_TRANSCRIPT, propagate that
+    const agg = err as { errors?: Array<{ code?: string }> }
+    const allNoTranscript = agg.errors?.every(e => e.code === 'NO_TRANSCRIPT')
+    if (allNoTranscript) throw Object.assign(new Error('No transcript'), { code: 'NO_TRANSCRIPT' })
+    console.log('[transcript] all RapidAPI failed, trying Supadata')
   }
 
-  // Step 3: RapidAPI YouTube Captions (additional free quota)
-  try {
-    const result = await method4_captionsApi(videoId)
-    console.log('[transcript] CaptionsAPI succeeded')
-    return result
-  } catch (err) {
-    const e = err as { code?: string }
-    if (e.code === 'NO_TRANSCRIPT') throw err
-    console.log('[transcript] CaptionsAPI failed, trying Summarizer API')
-  }
-
-  // Step 4: RapidAPI YouTube Video Summarizer
-  try {
-    const result = await method5_summarizer(videoId)
-    console.log('[transcript] Summarizer API succeeded')
-    return result
-  } catch (err) {
-    const e = err as { code?: string }
-    if (e.code === 'NO_TRANSCRIPT') throw err
-    console.log('[transcript] Summarizer failed, trying Transcriptor')
-  }
-
-  // Step 5: RapidAPI Youtube Transcriptor
-  try {
-    const result = await method6_transcriptor(videoId)
-    console.log('[transcript] Transcriptor succeeded')
-    return result
-  } catch (err) {
-    const e = err as { code?: string }
-    if (e.code === 'NO_TRANSCRIPT') throw err
-    console.log('[transcript] Transcriptor failed, trying Supadata')
-  }
-
-  // Step 6: Supadata (100/month — last resort)
+  // Step 3: Supadata (100/month — last resort)
   return method7_supadata(videoId)
 }
 
