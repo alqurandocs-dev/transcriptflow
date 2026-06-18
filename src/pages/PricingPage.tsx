@@ -14,15 +14,16 @@ const plans = [
     name: 'Free',
     monthlyPrice: 0,
     yearlyPrice: 0,
-    description: 'Perfect for trying out TranscriptFlow',
+    description: 'Try TranscriptFlow with no commitment',
+    badge: null,
     features: [
-      '5 transcripts / month',
-      'Up to 10 min per video',
-      'English only',
-      'TXT export',
-      'Community support',
+      '3 transcripts / month',
+      'Any video length',
+      'English transcripts',
+      'Copy & TXT export',
+      'Timestamps included',
     ],
-    notIncluded: ['Priority processing', 'All languages', 'PDF & SRT export', 'API access'],
+    notIncluded: ['All languages', 'PDF & SRT export', 'Priority processing', 'API access'],
     highlighted: false,
     cta: 'Get started free',
     href: '/login',
@@ -30,63 +31,81 @@ const plans = [
   {
     id: 'pro',
     name: 'Pro',
-    monthlyPrice: 12,
-    yearlyPrice: 9,
+    monthlyPrice: 9,
+    yearlyPrice: 7,
     description: 'For creators and solo professionals',
+    badge: 'Most popular',
     features: [
-      '100 transcripts / month',
-      'Up to 3 hours per video',
+      '50 transcripts / month',
+      'Any video length',
       '50+ languages',
       'TXT, PDF, SRT export',
       'Priority processing',
+      'Search & timestamp jump',
       'Email support',
-      'Search & bookmark',
     ],
     notIncluded: ['Team workspaces', 'API access'],
     highlighted: true,
-    cta: 'Start free trial',
+    cta: 'Start 7-day free trial',
     href: '/login',
   },
   {
-    id: 'team',
-    name: 'Team',
-    monthlyPrice: 39,
-    yearlyPrice: 29,
-    description: 'For teams and growing businesses',
+    id: 'business',
+    name: 'Business',
+    monthlyPrice: 29,
+    yearlyPrice: 22,
+    description: 'For teams and power users',
+    badge: null,
     features: [
-      'Unlimited transcripts',
-      'Unlimited video length',
+      '200 transcripts / month',
+      'Any video length',
       '50+ languages',
       'All export formats',
       'Priority processing',
-      'Team workspaces',
+      'Team workspaces (5 seats)',
       'REST API access',
       'Dedicated support',
-      'Custom integrations',
     ],
     notIncluded: [],
     highlighted: false,
-    cta: 'Start free trial',
+    cta: 'Start 7-day free trial',
     href: '/login',
   },
+]
+
+const comparison = [
+  { feature: 'Transcripts / month', free: '3', pro: '50', business: '200' },
+  { feature: 'Video length', free: 'Any', pro: 'Any', business: 'Any' },
+  { feature: 'Languages', free: 'English', pro: '50+', business: '50+' },
+  { feature: 'TXT export', free: '✓', pro: '✓', business: '✓' },
+  { feature: 'PDF & SRT export', free: '—', pro: '✓', business: '✓' },
+  { feature: 'Priority processing', free: '—', pro: '✓', business: '✓' },
+  { feature: 'Search & timestamps', free: '—', pro: '✓', business: '✓' },
+  { feature: 'Team workspaces', free: '—', pro: '—', business: '✓' },
+  { feature: 'API access', free: '—', pro: '—', business: '✓' },
+  { feature: 'Support', free: 'Community', pro: 'Email', business: 'Dedicated' },
 ]
 
 const faqs = [
   {
     q: 'How accurate are the transcripts?',
-    a: 'Our AI achieves 97%+ accuracy on clear audio. Accuracy may vary for heavily accented speech, background noise, or technical jargon.',
+    a: 'TranscriptFlow uses YouTube\'s official caption data, so accuracy depends on the video\'s captions. Auto-generated captions are typically 90–95% accurate on clear speech.',
+  },
+  {
+    q: 'What counts as one transcript?',
+    a: 'Each video you generate a transcript for counts as one use, regardless of video length. Re-generating the same video does not count again.',
   },
   {
     q: 'Can I cancel anytime?',
-    a: 'Yes. You can cancel your subscription at any time and keep access until the end of your billing period.',
+    a: 'Yes. Cancel anytime from your account settings. You keep access until the end of your billing period with no extra charges.',
   },
   {
     q: 'Do unused transcripts roll over?',
-    a: 'Transcripts reset monthly and do not roll over. We recommend upgrading if you consistently hit the limit.',
+    a: 'No, transcript limits reset on the 1st of each month and do not roll over. Upgrade anytime if you need more.',
   },
   {
-    q: 'Is there an API available?',
-    a: 'Yes, REST API access is available on the Team plan. Documentation and API keys are available in your dashboard.',
+    q: 'What if a video has no transcript?',
+    a: 'Some videos have captions disabled by the creator. This will not count against your monthly limit.',
   },
 ]
 
@@ -142,11 +161,11 @@ export default function PricingPage() {
                   plan.highlighted && 'ring-2 ring-[hsl(var(--primary))] shadow-xl shadow-[hsl(var(--primary))]/10'
                 )}
               >
-                {plan.highlighted && (
+                {plan.badge && (
                   <div className="absolute -top-3 left-0 right-0 flex justify-center">
                     <Badge className="gap-1 px-3">
                       <Zap className="h-3 w-3" />
-                      Most popular
+                      {plan.badge}
                     </Badge>
                   </div>
                 )}
@@ -201,8 +220,43 @@ export default function PricingPage() {
           </div>
 
           <p className="text-center text-sm text-[hsl(var(--muted-foreground))] mt-8">
-            All plans include a 14-day free trial. No credit card required to start.
+            No credit card required to start. Cancel anytime.
           </p>
+        </div>
+      </section>
+
+      {/* Comparison table */}
+      <section className="pb-16 sm:pb-24 px-4">
+        <div className="mx-auto max-w-4xl">
+          <h2 className="text-xl font-semibold text-center mb-6">Plan comparison</h2>
+          <div className="overflow-x-auto rounded-lg border border-[hsl(var(--border))]">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[hsl(var(--border))] bg-[hsl(var(--muted))]">
+                  <th className="text-left py-3 px-4 font-medium text-[hsl(var(--muted-foreground))]">Feature</th>
+                  <th className="text-center py-3 px-4 font-semibold">Free</th>
+                  <th className="text-center py-3 px-4 font-semibold text-[hsl(var(--primary))]">Pro</th>
+                  <th className="text-center py-3 px-4 font-semibold">Business</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comparison.map((row, i) => (
+                  <tr
+                    key={row.feature}
+                    className={cn(
+                      'border-b border-[hsl(var(--border))] last:border-0',
+                      i % 2 === 0 ? '' : 'bg-[hsl(var(--muted)/0.4)]'
+                    )}
+                  >
+                    <td className="py-3 px-4 text-[hsl(var(--muted-foreground))]">{row.feature}</td>
+                    <td className="py-3 px-4 text-center">{row.free}</td>
+                    <td className="py-3 px-4 text-center font-medium text-[hsl(var(--primary))]">{row.pro}</td>
+                    <td className="py-3 px-4 text-center">{row.business}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
