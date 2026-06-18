@@ -28,7 +28,12 @@ export default function Navbar() {
     ?? '?'
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-[hsl(var(--border))] bg-[hsl(var(--background))]/95 backdrop-blur supports-[backdrop-filter]:bg-[hsl(var(--background))]/60">
+    <header className="sticky top-0 z-50 w-full">
+      {/* Trial announcement banner */}
+      <div className="w-full bg-[hsl(var(--primary))] text-white text-center text-xs py-2 px-4">
+        🚧 এই app টি এখন <strong>trial</strong> চলছে — তাই login করতে হচ্ছে। সম্পূর্ণ live হলে কোনো account ছাড়াই transcript generate করা যাবে।
+      </div>
+      <div className="border-b border-[hsl(var(--border))] bg-[hsl(var(--background))]/95 backdrop-blur supports-[backdrop-filter]:bg-[hsl(var(--background))]/60">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center justify-between">
 
@@ -102,7 +107,7 @@ export default function Navbar() {
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div className="md:hidden border-t border-[hsl(var(--border))] bg-[hsl(var(--background))] px-4 py-4 space-y-1">
+        <div className="md:hidden border-t border-[hsl(var(--border))] bg-[hsl(var(--background))]/95 px-4 py-4 space-y-1">
           {navLinks.map((link) => (
             <Link
               key={link.href}
@@ -144,6 +149,7 @@ export default function Navbar() {
           </div>
         </div>
       )}
+      </div>
     </header>
   )
 }

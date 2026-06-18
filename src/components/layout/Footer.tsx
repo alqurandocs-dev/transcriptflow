@@ -78,7 +78,14 @@ export default function Footer() {
           </p>
           <p className="text-sm text-[hsl(var(--muted-foreground))]">
             Made by{' '}
-            <span className="font-medium text-[hsl(var(--foreground))]">Microvex</span>
+            <a
+              href="https://www.microvex.net/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-[hsl(var(--foreground))] hover:text-[hsl(var(--primary))] transition-colors underline underline-offset-2"
+            >
+              Microvex
+            </a>
           </p>
         </div>
       </div>

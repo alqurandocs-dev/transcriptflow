@@ -121,7 +121,7 @@ export default function HomePage() {
           </div>
 
           <p className="mt-4 text-sm text-[hsl(var(--muted-foreground))]">
-            No account required · 3 free transcripts/month · Upgrade anytime
+            No account needed · Free to use · No signup required
           </p>
 
           {/* Demo preview */}
