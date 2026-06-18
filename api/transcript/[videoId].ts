@@ -1,15 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { YoutubeTranscript, YoutubeTranscriptError } from 'youtube-transcript'
 import { sendError, setCors } from '../_lib/errors'
 
 const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/
-
-// Transcript fetch timeout — prevents hanging on slow/broken videos
-const TRANSCRIPT_TIMEOUT_MS = 15_000
+const TRANSCRIPT_TIMEOUT_MS = 20_000
 
 interface TranscriptSegment {
   text: string
-  offset: number  // milliseconds
+  offset: number
   duration: number
 }
 
@@ -19,187 +16,192 @@ interface VideoMeta {
   thumbnail: string
 }
 
-interface SuccessResponse {
-  title: string
-  channel: string
-  thumbnail: string
-  transcript: TranscriptSegment[]
+// Cookies to bypass YouTube consent/bot detection on datacenter IPs
+const YT_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Cookie': 'SOCS=CAESEwgDEgk0OTI5MzA1NjUaAmVuIAEaBgiAo_CmBg==; CONSENT=YES+cb',
 }
 
 async function fetchVideoMeta(videoId: string): Promise<VideoMeta> {
-  const oembedUrl =
-    `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
-
-  const res = await fetch(oembedUrl, {
-    headers: { 'User-Agent': 'TranscriptFlow/1.0' },
+  const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
+  const res = await fetch(url, {
+    headers: { 'User-Agent': YT_HEADERS['User-Agent'] },
     signal: AbortSignal.timeout(8_000),
   })
 
   if (res.status === 404 || res.status === 400) {
     throw Object.assign(new Error('Video not found'), { code: 'VIDEO_NOT_FOUND' })
   }
+  if (!res.ok) {
+    throw Object.assign(new Error(`oEmbed failed: ${res.status}`), { code: 'INTERNAL_ERROR' })
+  }
+
+  const data = await res.json() as { title: string; author_name: string; thumbnail_url: string }
+  return { title: data.title, channel: data.author_name, thumbnail: data.thumbnail_url }
+}
+
+// Fetch the YouTube watch page and extract the captions track URL
+async function fetchCaptionsUrl(videoId: string): Promise<string> {
+  const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+    headers: YT_HEADERS,
+    signal: AbortSignal.timeout(TRANSCRIPT_TIMEOUT_MS),
+  })
 
   if (!res.ok) {
-    throw Object.assign(
-      new Error(`oEmbed request failed: ${res.status}`),
-      { code: 'INTERNAL_ERROR' }
-    )
+    throw Object.assign(new Error(`YouTube page fetch failed: ${res.status}`), { code: 'INTERNAL_ERROR' })
   }
 
-  const data = await res.json() as {
-    title: string
-    author_name: string
-    thumbnail_url: string
+  const html = await res.text()
+
+  // Extract ytInitialPlayerResponse JSON
+  const match = html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\});\s*(?:var |const |let |\w)/s)
+  if (!match) {
+    // Try alternate pattern
+    const match2 = html.match(/ytInitialPlayerResponse\s*=\s*(\{[\s\S]+?\});/)
+    if (!match2) {
+      throw Object.assign(new Error('Could not parse YouTube page'), { code: 'INTERNAL_ERROR' })
+    }
   }
 
-  return {
-    title: data.title,
-    channel: data.author_name,
-    thumbnail: data.thumbnail_url,
+  let playerResponse: Record<string, unknown>
+  try {
+    // Use a more lenient extraction - find the JSON by counting braces
+    const start = html.indexOf('ytInitialPlayerResponse = {')
+    if (start === -1) {
+      throw new Error('ytInitialPlayerResponse not found')
+    }
+    const jsonStart = html.indexOf('{', start)
+    let depth = 0
+    let jsonEnd = jsonStart
+    for (let i = jsonStart; i < html.length; i++) {
+      if (html[i] === '{') depth++
+      else if (html[i] === '}') {
+        depth--
+        if (depth === 0) { jsonEnd = i; break }
+      }
+    }
+    playerResponse = JSON.parse(html.slice(jsonStart, jsonEnd + 1))
+  } catch {
+    throw Object.assign(new Error('Failed to parse ytInitialPlayerResponse'), { code: 'INTERNAL_ERROR' })
   }
+
+  // Navigate to captions data
+  const captions = (playerResponse as {
+    captions?: {
+      playerCaptionsTracklistRenderer?: {
+        captionTracks?: Array<{ baseUrl: string; languageCode: string; kind?: string }>
+      }
+    }
+  }).captions?.playerCaptionsTracklistRenderer?.captionTracks
+
+  if (!captions || captions.length === 0) {
+    throw Object.assign(new Error('No captions available'), { code: 'NO_TRANSCRIPT' })
+  }
+
+  // Prefer English, then auto-generated English, then first available
+  const preferred =
+    captions.find(t => t.languageCode === 'en' && t.kind !== 'asr') ||
+    captions.find(t => t.languageCode === 'en') ||
+    captions.find(t => t.languageCode.startsWith('en')) ||
+    captions[0]
+
+  return preferred.baseUrl
 }
 
-// FIX #3: Wrap fetchTranscript with a hard timeout
-function fetchTranscriptWithTimeout(videoId: string) {
-  return Promise.race([
-    YoutubeTranscript.fetchTranscript(videoId),
-    new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(Object.assign(new Error('Transcript fetch timed out'), { code: 'INTERNAL_ERROR' })),
-        TRANSCRIPT_TIMEOUT_MS
-      )
-    ),
-  ])
-}
+// Fetch and parse the XML captions file
+async function fetchTranscriptFromUrl(captionsUrl: string): Promise<TranscriptSegment[]> {
+  const res = await fetch(captionsUrl, {
+    headers: YT_HEADERS,
+    signal: AbortSignal.timeout(10_000),
+  })
 
-function isRateLimitError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false
-  const msg = err.message.toLowerCase()
-  return (
-    msg.includes('429') ||
-    msg.includes('too many requests') ||
-    msg.includes('rate limit')
-  )
-}
-
-// FIX #1: Distinguish "no transcript" from "video not found/invalid"
-// youtube-transcript throws YoutubeTranscriptError for both cases,
-// but the messages are different — check the message to disambiguate.
-function classifyYoutubeError(err: unknown): 'NO_TRANSCRIPT' | 'VIDEO_NOT_FOUND' | null {
-  if (!(err instanceof YoutubeTranscriptError)) return null
-
-  const msg = err.message.toLowerCase()
-
-  // "Impossible to retrieve Youtube video ID" → the video doesn't exist
-  if (msg.includes('impossible to retrieve') || msg.includes('video id')) {
-    return 'VIDEO_NOT_FOUND'
+  if (!res.ok) {
+    throw Object.assign(new Error(`Captions fetch failed: ${res.status}`), { code: 'INTERNAL_ERROR' })
   }
 
-  // "Transcript is disabled on this video" → video exists, no captions
-  if (
-    msg.includes('transcript is disabled') ||
-    msg.includes('no transcript') ||
-    msg.includes('subtitles are disabled') ||
-    msg.includes('could not find')
-  ) {
-    return 'NO_TRANSCRIPT'
+  const xml = await res.text()
+
+  // Parse <text start="..." dur="...">...</text> elements
+  const segments: TranscriptSegment[] = []
+  const tagRe = /<text\s+start="([\d.]+)"\s+dur="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g
+  let m: RegExpExecArray | null
+
+  while ((m = tagRe.exec(xml)) !== null) {
+    const text = m[3]
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/<[^>]+>/g, '')
+      .trim()
+
+    if (text) {
+      segments.push({
+        text,
+        offset: Math.round(parseFloat(m[1]) * 1000),
+        duration: Math.round(parseFloat(m[2]) * 1000),
+      })
+    }
   }
 
-  // Unknown YoutubeTranscriptError — treat as no transcript (safe default)
-  return 'NO_TRANSCRIPT'
+  if (segments.length === 0) {
+    throw Object.assign(new Error('Empty transcript'), { code: 'NO_TRANSCRIPT' })
+  }
+
+  return segments
 }
 
-export default async function handler(
-  req: VercelRequest,
-  res: VercelResponse
-) {
-  // FIX #4: Set CORS headers in the handler (not only in vercel.json)
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   setCors(res)
 
-  // Handle OPTIONS preflight
-  if (req.method === 'OPTIONS') {
-    return res.status(204).end()
-  }
-
-  // Only allow GET
+  if (req.method === 'OPTIONS') return res.status(204).end()
   if (req.method !== 'GET') {
-    return res.status(405).json({
-      error: { code: 'METHOD_NOT_ALLOWED', message: 'Only GET is supported' },
-    })
+    return res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'Only GET is supported' } })
   }
 
   const { videoId } = req.query
-
-  // Validate video ID format
   if (typeof videoId !== 'string' || !VIDEO_ID_RE.test(videoId)) {
-    return sendError(
-      res,
-      'INVALID_VIDEO_ID',
-      'Invalid video ID. Must be an 11-character YouTube video ID.'
-    )
+    return sendError(res, 'INVALID_VIDEO_ID', 'Invalid video ID. Must be an 11-character YouTube video ID.')
   }
 
-  // FIX #2: Fetch metadata FIRST to distinguish "video not found" from
-  // "video exists but has no transcript". Running in parallel was a race
-  // condition — the wrong error could win depending on response time.
+  // Fetch metadata first to verify video exists
   let meta: VideoMeta
   try {
     meta = await fetchVideoMeta(videoId)
   } catch (err: unknown) {
-    if (isRateLimitError(err)) {
-      return sendError(res, 'RATE_LIMITED', 'Too many requests. Please wait a moment and try again.')
-    }
     const asError = err as { code?: string }
     if (asError.code === 'VIDEO_NOT_FOUND') {
       return sendError(res, 'VIDEO_NOT_FOUND', 'Video not found or is private.')
     }
     console.error('[transcript] metadata error:', err)
-    return sendError(res, 'INTERNAL_ERROR', 'An unexpected error occurred. Please try again later.')
+    return sendError(res, 'INTERNAL_ERROR', 'Failed to fetch video metadata.')
   }
 
-  // Video confirmed to exist — now fetch transcript
-  let rawTranscript: Awaited<ReturnType<typeof YoutubeTranscript.fetchTranscript>>
+  // Fetch transcript
+  let segments: TranscriptSegment[]
   try {
-    rawTranscript = await fetchTranscriptWithTimeout(videoId)
+    const captionsUrl = await fetchCaptionsUrl(videoId)
+    segments = await fetchTranscriptFromUrl(captionsUrl)
   } catch (err: unknown) {
-    if (isRateLimitError(err)) {
-      return sendError(res, 'RATE_LIMITED', 'Too many requests. Please wait a moment and try again.')
-    }
-
-    const ytErrorType = classifyYoutubeError(err)
-    if (ytErrorType === 'NO_TRANSCRIPT') {
+    const asError = err as { code?: string }
+    if (asError.code === 'NO_TRANSCRIPT') {
       return sendError(res, 'NO_TRANSCRIPT', 'This video does not have a transcript available.')
     }
-    if (ytErrorType === 'VIDEO_NOT_FOUND') {
+    if (asError.code === 'VIDEO_NOT_FOUND') {
       return sendError(res, 'VIDEO_NOT_FOUND', 'Video not found or is private.')
     }
-
-    const asError = err as { code?: string }
-    if (asError.code === 'INTERNAL_ERROR') {
-      return sendError(res, 'INTERNAL_ERROR', 'Transcript fetch timed out. Please try again.')
-    }
-
-    console.error('[transcript] unexpected error:', err)
-    return sendError(res, 'INTERNAL_ERROR', 'An unexpected error occurred. Please try again later.')
+    console.error('[transcript] transcript error:', err)
+    return sendError(res, 'INTERNAL_ERROR', 'Failed to fetch transcript. Please try again.')
   }
 
-  // Normalise transcript segments
-  const transcript: TranscriptSegment[] = rawTranscript.map((seg) => ({
-    text: seg.text.trim(),
-    offset: Math.round(seg.offset),
-    duration: Math.round(seg.duration),
-  }))
-
-  const payload: SuccessResponse = {
+  res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400')
+  return res.status(200).json({
     title: meta.title,
     channel: meta.channel,
     thumbnail: meta.thumbnail,
-    transcript,
-  }
-
-  // Cache for 1 hour at CDN, 24 hours stale-while-revalidate
-  res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400')
-  res.setHeader('Content-Type', 'application/json')
-
-  return res.status(200).json(payload)
+    transcript: segments,
+  })
 }
