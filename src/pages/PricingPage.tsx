@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Check, Zap, ArrowRight, HelpCircle } from 'lucide-react'
+import { Check, Zap, ArrowRight, HelpCircle, X, Mail } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 
 type Billing = 'monthly' | 'yearly'
+
+const CONTACT_EMAIL = 'sendtomicrovex@gmail.com'
 
 const plans = [
   {
@@ -111,6 +113,7 @@ const faqs = [
 
 export default function PricingPage() {
   const [billing, setBilling] = useState<Billing>('yearly')
+  const [contactPlan, setContactPlan] = useState<string | null>(null)
 
   return (
     <div className="min-h-screen bg-[hsl(var(--background))]">
@@ -189,16 +192,27 @@ export default function PricingPage() {
                 </CardHeader>
 
                 <CardContent className="flex flex-col flex-1 gap-6">
-                  <Button
-                    className="w-full gap-2"
-                    variant={plan.highlighted ? 'default' : 'outline'}
-                    asChild
-                  >
-                    <Link to={plan.href}>
+                  {plan.id === 'free' ? (
+                    <Button
+                      className="w-full gap-2"
+                      variant="outline"
+                      asChild
+                    >
+                      <Link to="/transcript">
+                        {plan.cta}
+                        <ArrowRight className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                  ) : (
+                    <Button
+                      className="w-full gap-2"
+                      variant={plan.highlighted ? 'default' : 'outline'}
+                      onClick={() => setContactPlan(plan.name)}
+                    >
                       {plan.cta}
                       <ArrowRight className="h-4 w-4" />
-                    </Link>
-                  </Button>
+                    </Button>
+                  )}
 
                   <ul className="space-y-2.5">
                     {plan.features.map((feature) => (
@@ -289,11 +303,70 @@ export default function PricingPage() {
               Still have questions?
             </p>
             <Button variant="outline" asChild>
-              <Link to="/">Contact support</Link>
+              <a href={`mailto:${CONTACT_EMAIL}`}>Contact support</a>
             </Button>
           </div>
         </div>
       </section>
+
+      {/* Contact / upgrade modal */}
+      {contactPlan && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4"
+          onClick={() => setContactPlan(null)}
+        >
+          <div
+            className="bg-[hsl(var(--background))] rounded-xl border border-[hsl(var(--border))] shadow-2xl w-full max-w-md p-6 relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setContactPlan(null)}
+              className="absolute top-4 right-4 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors"
+              aria-label="Close"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="flex items-center justify-center w-12 h-12 rounded-full bg-[hsl(var(--primary))]/10 mb-4 mx-auto">
+              <Mail className="h-5 w-5 text-[hsl(var(--primary))]" />
+            </div>
+
+            <h2 className="text-xl font-bold text-center mb-1">Upgrade to {contactPlan}</h2>
+            <p className="text-sm text-[hsl(var(--muted-foreground))] text-center mb-6">
+              We're handling upgrades manually right now. Send us an email and we'll get you set up within 24 hours.
+            </p>
+
+            <div className="bg-[hsl(var(--muted))] rounded-lg p-4 mb-5 text-center">
+              <p className="text-xs text-[hsl(var(--muted-foreground))] mb-1">Send your upgrade request to</p>
+              <a
+                href={`mailto:${CONTACT_EMAIL}?subject=TranscriptFlow ${contactPlan} Upgrade`}
+                className="font-semibold text-[hsl(var(--primary))] hover:underline break-all"
+              >
+                {CONTACT_EMAIL}
+              </a>
+            </div>
+
+            <p className="text-xs text-[hsl(var(--muted-foreground))] text-center mb-5">
+              Include your name and preferred plan in the email. We'll reply with payment details.
+            </p>
+
+            <div className="flex gap-3">
+              <Button variant="outline" className="flex-1" onClick={() => setContactPlan(null)}>
+                Cancel
+              </Button>
+              <Button
+                className="flex-1 gap-2"
+                asChild
+              >
+                <a href={`mailto:${CONTACT_EMAIL}?subject=TranscriptFlow ${contactPlan} Upgrade&body=Hi, I'd like to upgrade to the ${contactPlan} plan. My name is: `}>
+                  <Mail className="h-4 w-4" />
+                  Open email
+                </a>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
