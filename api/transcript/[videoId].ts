@@ -104,11 +104,11 @@ async function method3_rapidapi(videoId: string): Promise<TranscriptSegment[]> {
   if (res.status === 429) throw Object.assign(new Error('Rate limited'), { code: 'RATE_LIMITED' })
   if (!res.ok) throw new Error(`RapidAPI ${res.status}`)
 
-  const data = await res.json()
+  const data = await res.json() as Record<string, unknown>
 
   // Response can be array or object with transcript field
   const items: Array<{ text?: string; start?: number; offset?: number; duration?: number }> =
-    Array.isArray(data) ? data : (data.transcript ?? data.content ?? [])
+    Array.isArray(data) ? data : ((data.transcript ?? data.content ?? []) as typeof items)
 
   if (!items.length) throw Object.assign(new Error('Empty'), { code: 'NO_TRANSCRIPT' })
 
@@ -189,9 +189,9 @@ async function method5_summarizer(videoId: string): Promise<TranscriptSegment[]>
   if (res.status === 429) throw Object.assign(new Error('Rate limited'), { code: 'RATE_LIMITED' })
   if (!res.ok) throw new Error(`Summarizer ${res.status}`)
 
-  const data = await res.json()
+  const data = await res.json() as Record<string, unknown>
   const items: Array<{ text?: string; start?: number; offset?: number; duration?: number }> =
-    Array.isArray(data) ? data : (data.transcript ?? data.content ?? data.segments ?? [])
+    Array.isArray(data) ? data : ((data.transcript ?? data.content ?? data.segments ?? []) as typeof items)
 
   if (!items.length) throw Object.assign(new Error('Empty'), { code: 'NO_TRANSCRIPT' })
   return items.map(s => ({
@@ -221,9 +221,9 @@ async function method6_transcriptor(videoId: string): Promise<TranscriptSegment[
   if (res.status === 429) throw Object.assign(new Error('Rate limited'), { code: 'RATE_LIMITED' })
   if (!res.ok) throw new Error(`Transcriptor ${res.status}`)
 
-  const data = await res.json()
+  const data = await res.json() as Record<string, unknown>
   const items: Array<{ text?: string; start?: number; offset?: number; duration?: number }> =
-    Array.isArray(data) ? data : (data.transcript ?? data.content ?? data.segments ?? [])
+    Array.isArray(data) ? data : ((data.transcript ?? data.content ?? data.segments ?? []) as typeof items)
 
   if (!items.length) throw Object.assign(new Error('Empty'), { code: 'NO_TRANSCRIPT' })
   return items.map(s => ({
