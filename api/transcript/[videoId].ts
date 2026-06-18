@@ -118,9 +118,59 @@ async function method3_rapidapi(videoId: string): Promise<TranscriptSegment[]> {
   })).filter(s => s.text)
 }
 
-// ─── Method 4: Supadata (100 req/month free — last resort) ───────────────────
+// ─── Method 4: RapidAPI YouTube Captions (WEBVTT format) ─────────────────────
 
-async function method4_supadata(videoId: string): Promise<TranscriptSegment[]> {
+function parseWebvtt(vtt: string): TranscriptSegment[] {
+  const segments: TranscriptSegment[] = []
+  const blocks = vtt.replace(/\r\n/g, '\n').split(/\n\n+/)
+  for (const block of blocks) {
+    const lines = block.trim().split('\n')
+    const timeLine = lines.find(l => l.includes('-->'))
+    if (!timeLine) continue
+    const [startStr, endStr] = timeLine.split('-->')
+    const toMs = (t: string) => {
+      const parts = t.trim().replace(',', '.').split(':')
+      const secs = parts.length === 3
+        ? +parts[0] * 3600 + +parts[1] * 60 + +parts[2]
+        : +parts[0] * 60 + +parts[1]
+      return Math.round(secs * 1000)
+    }
+    const start = toMs(startStr)
+    const end = toMs(endStr)
+    const text = lines.slice(lines.indexOf(timeLine) + 1).join(' ')
+      .replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim()
+    if (text) segments.push({ text, offset: start, duration: end - start })
+  }
+  return segments
+}
+
+async function method4_captionsApi(videoId: string): Promise<TranscriptSegment[]> {
+  const apiKey = process.env.RAPIDAPI_KEY
+  if (!apiKey) throw new Error('No RapidAPI key')
+
+  const res = await fetch(
+    `https://youtube-captions-transcript-subtitles-video-combiner.p.rapidapi.com/download-webvtt/${videoId}?language=en&response_mode=default`,
+    {
+      headers: {
+        'x-rapidapi-host': 'youtube-captions-transcript-subtitles-video-combiner.p.rapidapi.com',
+        'x-rapidapi-key': apiKey,
+      },
+      signal: AbortSignal.timeout(15_000),
+    }
+  )
+  if (res.status === 404) throw Object.assign(new Error('No transcript'), { code: 'NO_TRANSCRIPT' })
+  if (res.status === 429) throw Object.assign(new Error('Rate limited'), { code: 'RATE_LIMITED' })
+  if (!res.ok) throw new Error(`CaptionsAPI ${res.status}`)
+
+  const text = await res.text()
+  const segments = parseWebvtt(text)
+  if (!segments.length) throw Object.assign(new Error('Empty'), { code: 'NO_TRANSCRIPT' })
+  return segments
+}
+
+// ─── Method 5: Supadata (100 req/month free — last resort) ───────────────────
+
+async function method5_supadata(videoId: string): Promise<TranscriptSegment[]> {
   const apiKey = process.env.SUPADATA_API_KEY
   if (!apiKey) throw Object.assign(new Error('No Supadata key'), { code: 'INTERNAL_ERROR' })
 
@@ -156,7 +206,7 @@ async function fetchTranscript(videoId: string): Promise<TranscriptSegment[]> {
     console.log('[transcript] free methods failed, trying RapidAPI')
   }
 
-  // Step 2: RapidAPI (500/month)
+  // Step 2: RapidAPI youtube-transcript3 (500/month)
   try {
     const result = await method3_rapidapi(videoId)
     console.log('[transcript] RapidAPI succeeded')
@@ -164,11 +214,22 @@ async function fetchTranscript(videoId: string): Promise<TranscriptSegment[]> {
   } catch (err) {
     const e = err as { code?: string }
     if (e.code === 'NO_TRANSCRIPT') throw err
-    console.log('[transcript] RapidAPI failed, trying Supadata')
+    console.log('[transcript] RapidAPI failed, trying CaptionsAPI')
   }
 
-  // Step 3: Supadata (100/month — last resort)
-  return method4_supadata(videoId)
+  // Step 3: RapidAPI YouTube Captions (additional free quota)
+  try {
+    const result = await method4_captionsApi(videoId)
+    console.log('[transcript] CaptionsAPI succeeded')
+    return result
+  } catch (err) {
+    const e = err as { code?: string }
+    if (e.code === 'NO_TRANSCRIPT') throw err
+    console.log('[transcript] CaptionsAPI failed, trying Supadata')
+  }
+
+  // Step 4: Supadata (100/month — last resort)
+  return method5_supadata(videoId)
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
