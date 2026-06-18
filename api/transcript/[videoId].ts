@@ -16,32 +16,76 @@ interface VideoMeta {
   thumbnail: string
 }
 
+// ─── Video metadata ───────────────────────────────────────────────────────────
+
 async function fetchVideoMeta(videoId: string): Promise<VideoMeta> {
   const res = await fetch(
     `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
     { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8_000) }
   )
-  if (res.status === 404 || res.status === 400) {
+  if (res.status === 404 || res.status === 400)
     throw Object.assign(new Error('Video not found'), { code: 'VIDEO_NOT_FOUND' })
-  }
-  if (!res.ok) throw Object.assign(new Error(`oEmbed ${res.status}`), { code: 'INTERNAL_ERROR' })
+  if (!res.ok)
+    throw Object.assign(new Error(`oEmbed ${res.status}`), { code: 'INTERNAL_ERROR' })
   const d = await res.json() as { title: string; author_name: string; thumbnail_url: string }
   return { title: d.title, channel: d.author_name, thumbnail: d.thumbnail_url }
 }
 
-// Primary: youtube-transcript (free, no rate limit)
-async function fetchViaYoutubeTranscript(videoId: string): Promise<TranscriptSegment[]> {
+// ─── Method 1: youtube-transcript package ────────────────────────────────────
+
+async function method1_youtubeTranscript(videoId: string): Promise<TranscriptSegment[]> {
   const raw = await Promise.race([
     YoutubeTranscript.fetchTranscript(videoId),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('timeout')), 15_000)
-    ),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 12_000)),
   ])
+  if (!raw?.length) throw new Error('empty')
   return raw.map(s => ({ text: s.text.trim(), offset: Math.round(s.offset), duration: Math.round(s.duration) }))
 }
 
-// Fallback: Supadata API (100 req/month free — only used when primary fails)
-async function fetchViaSupadata(videoId: string): Promise<TranscriptSegment[]> {
+// ─── Method 2: YouTube timedtext CDN (direct, no player API needed) ───────────
+
+function parseTimedtextJson3(data: unknown): TranscriptSegment[] {
+  const events = (data as { events?: Array<{ tStartMs?: number; dDurationMs?: number; segs?: Array<{ utf8?: string }> }> }).events ?? []
+  const segments: TranscriptSegment[] = []
+  for (const ev of events) {
+    if (!ev.segs) continue
+    const text = ev.segs.map(s => s.utf8 ?? '').join('').replace(/\n/g, ' ').trim()
+    if (text) segments.push({ text, offset: ev.tStartMs ?? 0, duration: ev.dDurationMs ?? 0 })
+  }
+  return segments
+}
+
+async function method2_timedtext(videoId: string): Promise<TranscriptSegment[]> {
+  // Try multiple lang/kind combos in parallel, take the first that returns data
+  const combos = [
+    `lang=en&fmt=json3`,
+    `lang=en&kind=asr&fmt=json3`,
+    `lang=en-US&fmt=json3`,
+    `lang=en-GB&fmt=json3`,
+  ]
+
+  const attempts = combos.map(async (params) => {
+    const res = await fetch(
+      `https://www.youtube.com/api/timedtext?v=${videoId}&${params}`,
+      {
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'en-US,en;q=0.9' },
+        signal: AbortSignal.timeout(10_000),
+      }
+    )
+    if (!res.ok) throw new Error(`${res.status}`)
+    const data = await res.json()
+    const segments = parseTimedtextJson3(data)
+    if (!segments.length) throw new Error('empty')
+    return segments
+  })
+
+  // Return first successful result
+  return Promise.any(attempts)
+}
+
+// ─── Method 3: Supadata (paid fallback, 100 req/month free) ──────────────────
+
+async function method3_supadata(videoId: string): Promise<TranscriptSegment[]> {
   const apiKey = process.env.SUPADATA_API_KEY
   if (!apiKey) throw Object.assign(new Error('No Supadata key'), { code: 'INTERNAL_ERROR' })
 
@@ -62,22 +106,26 @@ async function fetchViaSupadata(videoId: string): Promise<TranscriptSegment[]> {
   return data.content.map(s => ({ text: s.text.trim(), offset: Math.round(s.offset), duration: Math.round(s.duration) }))
 }
 
+// ─── Orchestrator: run free methods in parallel, Supadata as last resort ─────
+
 async function fetchTranscript(videoId: string): Promise<TranscriptSegment[]> {
-  // Try primary first
+  // Step 1: Run both free methods in parallel — fastest wins
   try {
-    const segments = await fetchViaYoutubeTranscript(videoId)
-    if (segments.length > 0) {
-      console.log('[transcript] fetched via youtube-transcript')
-      return segments
-    }
-  } catch (err) {
-    console.log('[transcript] youtube-transcript failed, trying Supadata:', (err as Error).message)
+    const result = await Promise.any([
+      method1_youtubeTranscript(videoId),
+      method2_timedtext(videoId),
+    ])
+    console.log('[transcript] free method succeeded')
+    return result
+  } catch {
+    console.log('[transcript] free methods failed, trying Supadata')
   }
 
-  // Fall back to Supadata
-  console.log('[transcript] using Supadata fallback')
-  return fetchViaSupadata(videoId)
+  // Step 2: Supadata fallback
+  return method3_supadata(videoId)
 }
+
+// ─── Handler ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   setCors(res)
@@ -91,21 +139,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return sendError(res, 'INVALID_VIDEO_ID', 'Invalid video ID.')
   }
 
-  let meta: VideoMeta
-  try {
-    meta = await fetchVideoMeta(videoId)
-  } catch (err: unknown) {
-    const e = err as { code?: string; message?: string }
+  // Fetch meta and transcript in parallel to save time
+  const [metaResult, transcriptResult] = await Promise.allSettled([
+    fetchVideoMeta(videoId),
+    fetchTranscript(videoId),
+  ])
+
+  if (metaResult.status === 'rejected') {
+    const e = metaResult.reason as { code?: string }
     if (e.code === 'VIDEO_NOT_FOUND') return sendError(res, 'VIDEO_NOT_FOUND', 'Video not found or is private.')
-    console.error('[transcript] meta error:', e.message)
     return sendError(res, 'INTERNAL_ERROR', 'Failed to fetch video info.')
   }
 
-  let segments: TranscriptSegment[]
-  try {
-    segments = await fetchTranscript(videoId)
-  } catch (err: unknown) {
-    const e = err as { code?: string; message?: string }
+  if (transcriptResult.status === 'rejected') {
+    const e = transcriptResult.reason as { code?: string; message?: string }
     console.error('[transcript] all methods failed:', e.message)
     if (e.code === 'NO_TRANSCRIPT') return sendError(res, 'NO_TRANSCRIPT', 'This video does not have a transcript available.')
     if (e.code === 'RATE_LIMITED') return sendError(res, 'RATE_LIMITED', 'Too many requests. Please wait and try again.')
@@ -113,5 +160,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400')
-  return res.status(200).json({ title: meta.title, channel: meta.channel, thumbnail: meta.thumbnail, transcript: segments })
+  return res.status(200).json({
+    title: metaResult.value.title,
+    channel: metaResult.value.channel,
+    thumbnail: metaResult.value.thumbnail,
+    transcript: transcriptResult.value,
+  })
 }
