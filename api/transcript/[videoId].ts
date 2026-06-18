@@ -2,7 +2,6 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { sendError, setCors } from '../_lib/errors'
 
 const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/
-const TRANSCRIPT_TIMEOUT_MS = 20_000
 
 interface TranscriptSegment {
   text: string
@@ -16,8 +15,7 @@ interface VideoMeta {
   thumbnail: string
 }
 
-// Cookies to bypass YouTube consent/bot detection on datacenter IPs
-const YT_HEADERS = {
+const CLIENT_HEADERS = {
   'User-Agent':
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
   'Accept-Language': 'en-US,en;q=0.9',
@@ -27,124 +25,118 @@ const YT_HEADERS = {
 async function fetchVideoMeta(videoId: string): Promise<VideoMeta> {
   const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
   const res = await fetch(url, {
-    headers: { 'User-Agent': YT_HEADERS['User-Agent'] },
+    headers: { 'User-Agent': CLIENT_HEADERS['User-Agent'] },
     signal: AbortSignal.timeout(8_000),
   })
-
   if (res.status === 404 || res.status === 400) {
     throw Object.assign(new Error('Video not found'), { code: 'VIDEO_NOT_FOUND' })
   }
   if (!res.ok) {
     throw Object.assign(new Error(`oEmbed failed: ${res.status}`), { code: 'INTERNAL_ERROR' })
   }
-
   const data = await res.json() as { title: string; author_name: string; thumbnail_url: string }
   return { title: data.title, channel: data.author_name, thumbnail: data.thumbnail_url }
 }
 
-// Fetch the YouTube watch page and extract the captions track URL
-async function fetchCaptionsUrl(videoId: string): Promise<string> {
-  const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-    headers: YT_HEADERS,
-    signal: AbortSignal.timeout(TRANSCRIPT_TIMEOUT_MS),
-  })
-
-  if (!res.ok) {
-    throw Object.assign(new Error(`YouTube page fetch failed: ${res.status}`), { code: 'INTERNAL_ERROR' })
-  }
-
-  const html = await res.text()
-
-  // Extract ytInitialPlayerResponse JSON
-  const match = html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\});\s*(?:var |const |let |\w)/s)
-  if (!match) {
-    // Try alternate pattern
-    const match2 = html.match(/ytInitialPlayerResponse\s*=\s*(\{[\s\S]+?\});/)
-    if (!match2) {
-      throw Object.assign(new Error('Could not parse YouTube page'), { code: 'INTERNAL_ERROR' })
-    }
-  }
-
-  let playerResponse: Record<string, unknown>
-  try {
-    // Use a more lenient extraction - find the JSON by counting braces
-    const start = html.indexOf('ytInitialPlayerResponse = {')
-    if (start === -1) {
-      throw new Error('ytInitialPlayerResponse not found')
-    }
-    const jsonStart = html.indexOf('{', start)
-    let depth = 0
-    let jsonEnd = jsonStart
-    for (let i = jsonStart; i < html.length; i++) {
-      if (html[i] === '{') depth++
-      else if (html[i] === '}') {
-        depth--
-        if (depth === 0) { jsonEnd = i; break }
-      }
-    }
-    playerResponse = JSON.parse(html.slice(jsonStart, jsonEnd + 1))
-  } catch {
-    throw Object.assign(new Error('Failed to parse ytInitialPlayerResponse'), { code: 'INTERNAL_ERROR' })
-  }
-
-  // Navigate to captions data
-  const captions = (playerResponse as {
-    captions?: {
-      playerCaptionsTracklistRenderer?: {
-        captionTracks?: Array<{ baseUrl: string; languageCode: string; kind?: string }>
-      }
-    }
-  }).captions?.playerCaptionsTracklistRenderer?.captionTracks
-
-  if (!captions || captions.length === 0) {
-    throw Object.assign(new Error('No captions available'), { code: 'NO_TRANSCRIPT' })
-  }
-
-  // Prefer English, then auto-generated English, then first available
-  const preferred =
-    captions.find(t => t.languageCode === 'en' && t.kind !== 'asr') ||
-    captions.find(t => t.languageCode === 'en') ||
-    captions.find(t => t.languageCode.startsWith('en')) ||
-    captions[0]
-
-  return preferred.baseUrl
+// Build minimal protobuf params for the get_transcript endpoint
+// Field 1 (wire type 2): videoId string
+function buildTranscriptParams(videoId: string): string {
+  const idBytes = Buffer.from(videoId, 'utf8')
+  const buf = Buffer.concat([
+    Buffer.from([0x0a, idBytes.length]),
+    idBytes,
+  ])
+  return buf.toString('base64')
 }
 
-// Fetch and parse the XML captions file
-async function fetchTranscriptFromUrl(captionsUrl: string): Promise<TranscriptSegment[]> {
-  const res = await fetch(captionsUrl, {
-    headers: YT_HEADERS,
-    signal: AbortSignal.timeout(10_000),
+// Use YouTube's internal get_transcript API (same endpoint the web player uses)
+async function fetchTranscriptViaApi(videoId: string): Promise<TranscriptSegment[]> {
+  const params = buildTranscriptParams(videoId)
+
+  const res = await fetch('https://www.youtube.com/youtubei/v1/get_transcript', {
+    method: 'POST',
+    headers: {
+      ...CLIENT_HEADERS,
+      'Content-Type': 'application/json',
+      'X-YouTube-Client-Name': '1',
+      'X-YouTube-Client-Version': '2.9999099',
+    },
+    body: JSON.stringify({
+      context: {
+        client: {
+          clientName: 'WEB',
+          clientVersion: '2.9999099',
+          hl: 'en',
+          gl: 'US',
+        },
+      },
+      params,
+    }),
+    signal: AbortSignal.timeout(20_000),
   })
 
+  if (res.status === 429) {
+    throw Object.assign(new Error('Rate limited'), { code: 'RATE_LIMITED' })
+  }
   if (!res.ok) {
-    throw Object.assign(new Error(`Captions fetch failed: ${res.status}`), { code: 'INTERNAL_ERROR' })
+    throw Object.assign(
+      new Error(`get_transcript API returned ${res.status}`),
+      { code: 'INTERNAL_ERROR' }
+    )
   }
 
-  const xml = await res.text()
+  const data = await res.json() as Record<string, unknown>
 
-  // Parse <text start="..." dur="...">...</text> elements
-  const segments: TranscriptSegment[] = []
-  const tagRe = /<text\s+start="([\d.]+)"\s+dur="([\d.]+)"[^>]*>([\s\S]*?)<\/text>/g
-  let m: RegExpExecArray | null
-
-  while ((m = tagRe.exec(xml)) !== null) {
-    const text = m[3]
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/<[^>]+>/g, '')
-      .trim()
-
-    if (text) {
-      segments.push({
-        text,
-        offset: Math.round(parseFloat(m[1]) * 1000),
-        duration: Math.round(parseFloat(m[2]) * 1000),
-      })
+  // Navigate the response structure
+  type Action = {
+    updateEngagementPanelAction?: {
+      content?: {
+        transcriptRenderer?: {
+          content?: {
+            transcriptSearchPanelRenderer?: {
+              body?: {
+                transcriptSegmentListRenderer?: {
+                  initialSegments?: Array<{
+                    transcriptSegmentRenderer?: {
+                      snippet?: { runs?: Array<{ text: string }> }
+                      startMs?: string
+                      endMs?: string
+                    }
+                  }>
+                }
+              }
+            }
+          }
+        }
+      }
     }
+  }
+
+  const actions = data.actions as Action[] | undefined
+  const initialSegments =
+    actions?.[0]
+      ?.updateEngagementPanelAction
+      ?.content
+      ?.transcriptRenderer
+      ?.content
+      ?.transcriptSearchPanelRenderer
+      ?.body
+      ?.transcriptSegmentListRenderer
+      ?.initialSegments
+
+  if (!initialSegments || initialSegments.length === 0) {
+    throw Object.assign(new Error('No transcript in response'), { code: 'NO_TRANSCRIPT' })
+  }
+
+  const segments: TranscriptSegment[] = []
+  for (const seg of initialSegments) {
+    const r = seg.transcriptSegmentRenderer
+    if (!r) continue
+    const text = (r.snippet?.runs ?? []).map(run => run.text).join('').trim()
+    if (!text) continue
+    const startMs = parseInt(r.startMs ?? '0', 10)
+    const endMs = parseInt(r.endMs ?? '0', 10)
+    segments.push({ text, offset: startMs, duration: endMs - startMs })
   }
 
   if (segments.length === 0) {
@@ -167,33 +159,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return sendError(res, 'INVALID_VIDEO_ID', 'Invalid video ID. Must be an 11-character YouTube video ID.')
   }
 
-  // Fetch metadata first to verify video exists
   let meta: VideoMeta
   try {
     meta = await fetchVideoMeta(videoId)
   } catch (err: unknown) {
-    const asError = err as { code?: string }
+    const asError = err as { code?: string; message?: string }
     if (asError.code === 'VIDEO_NOT_FOUND') {
       return sendError(res, 'VIDEO_NOT_FOUND', 'Video not found or is private.')
     }
-    console.error('[transcript] metadata error:', err)
+    console.error('[transcript] metadata error:', asError.message ?? err)
     return sendError(res, 'INTERNAL_ERROR', 'Failed to fetch video metadata.')
   }
 
-  // Fetch transcript
   let segments: TranscriptSegment[]
   try {
-    const captionsUrl = await fetchCaptionsUrl(videoId)
-    segments = await fetchTranscriptFromUrl(captionsUrl)
+    segments = await fetchTranscriptViaApi(videoId)
   } catch (err: unknown) {
-    const asError = err as { code?: string }
+    const asError = err as { code?: string; message?: string }
+    console.error('[transcript] transcript error:', asError.message ?? err)
     if (asError.code === 'NO_TRANSCRIPT') {
       return sendError(res, 'NO_TRANSCRIPT', 'This video does not have a transcript available.')
     }
-    if (asError.code === 'VIDEO_NOT_FOUND') {
-      return sendError(res, 'VIDEO_NOT_FOUND', 'Video not found or is private.')
+    if (asError.code === 'RATE_LIMITED') {
+      return sendError(res, 'RATE_LIMITED', 'Too many requests. Please wait and try again.')
     }
-    console.error('[transcript] transcript error:', err)
     return sendError(res, 'INTERNAL_ERROR', 'Failed to fetch transcript. Please try again.')
   }
 
