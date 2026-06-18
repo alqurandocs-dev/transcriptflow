@@ -200,9 +200,41 @@ async function method5_summarizer(videoId: string): Promise<TranscriptSegment[]>
   })).filter(s => s.text)
 }
 
-// ─── Method 6: Supadata (100 req/month free — last resort) ───────────────────
+// ─── Method 6: RapidAPI Youtube Transcriptor ─────────────────────────────────
 
-async function method6_supadata(videoId: string): Promise<TranscriptSegment[]> {
+async function method6_transcriptor(videoId: string): Promise<TranscriptSegment[]> {
+  const apiKey = process.env.RAPIDAPI_KEY
+  if (!apiKey) throw new Error('No RapidAPI key')
+
+  const res = await fetch(
+    `https://youtube-transcriptor.p.rapidapi.com/transcript?video_id=${videoId}&lang=en`,
+    {
+      headers: {
+        'x-rapidapi-host': 'youtube-transcriptor.p.rapidapi.com',
+        'x-rapidapi-key': apiKey,
+      },
+      signal: AbortSignal.timeout(15_000),
+    }
+  )
+  if (res.status === 404) throw Object.assign(new Error('No transcript'), { code: 'NO_TRANSCRIPT' })
+  if (res.status === 429) throw Object.assign(new Error('Rate limited'), { code: 'RATE_LIMITED' })
+  if (!res.ok) throw new Error(`Transcriptor ${res.status}`)
+
+  const data = await res.json()
+  const items: Array<{ text?: string; start?: number; offset?: number; duration?: number }> =
+    Array.isArray(data) ? data : (data.transcript ?? data.content ?? data.segments ?? [])
+
+  if (!items.length) throw Object.assign(new Error('Empty'), { code: 'NO_TRANSCRIPT' })
+  return items.map(s => ({
+    text: (s.text ?? '').trim(),
+    offset: Math.round((s.start ?? s.offset ?? 0) * (typeof s.start === 'number' && s.start < 10000 ? 1000 : 1)),
+    duration: Math.round(s.duration ?? 0),
+  })).filter(s => s.text)
+}
+
+// ─── Method 7: Supadata (100 req/month free — last resort) ───────────────────
+
+async function method7_supadata(videoId: string): Promise<TranscriptSegment[]> {
   const apiKey = process.env.SUPADATA_API_KEY
   if (!apiKey) throw Object.assign(new Error('No Supadata key'), { code: 'INTERNAL_ERROR' })
 
@@ -268,11 +300,22 @@ async function fetchTranscript(videoId: string): Promise<TranscriptSegment[]> {
   } catch (err) {
     const e = err as { code?: string }
     if (e.code === 'NO_TRANSCRIPT') throw err
-    console.log('[transcript] Summarizer failed, trying Supadata')
+    console.log('[transcript] Summarizer failed, trying Transcriptor')
   }
 
-  // Step 5: Supadata (100/month — last resort)
-  return method6_supadata(videoId)
+  // Step 5: RapidAPI Youtube Transcriptor
+  try {
+    const result = await method6_transcriptor(videoId)
+    console.log('[transcript] Transcriptor succeeded')
+    return result
+  } catch (err) {
+    const e = err as { code?: string }
+    if (e.code === 'NO_TRANSCRIPT') throw err
+    console.log('[transcript] Transcriptor failed, trying Supadata')
+  }
+
+  // Step 6: Supadata (100/month — last resort)
+  return method7_supadata(videoId)
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
