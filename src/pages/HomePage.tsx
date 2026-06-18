@@ -114,14 +114,14 @@ export default function HomePage() {
             <Button size="xl" asChild className="gap-2 shadow-lg shadow-[hsl(var(--primary))]/25">
               <Link to="/transcript">
                 <Play className="h-4 w-4" />
-                Generate transcript — free
+                Generate transcript
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
           </div>
 
           <p className="mt-4 text-sm text-[hsl(var(--muted-foreground))]">
-            100% free · No account required · No limits
+            No account required · 3 free transcripts/month · Upgrade anytime
           </p>
 
           {/* Demo preview */}
@@ -257,21 +257,26 @@ export default function HomePage() {
       <section className="py-20 sm:py-24 bg-gradient-to-br from-[hsl(var(--primary))] to-purple-600">
         <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 text-center text-white">
           <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-4">
-            Start transcribing for free today
+            Start transcribing today
           </h2>
           <p className="text-lg text-white/80 mb-8 max-w-xl mx-auto">
-            Join over 50,000 creators who save time with TranscriptFlow every day.
+            Join thousands of creators who save time with TranscriptFlow every day.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Button size="xl" variant="secondary" asChild className="gap-2">
               <Link to="/transcript">
-                Generate transcript — it's free
+                Generate transcript
                 <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+            <Button size="xl" variant="outline" asChild className="gap-2 border-white/30 text-white hover:bg-white/10">
+              <Link to="/pricing">
+                See pricing
               </Link>
             </Button>
           </div>
           <div className="flex items-center justify-center gap-6 mt-8 text-sm text-white/70">
-            {['No account needed', '100% free', 'No limits'].map((item) => (
+            {['No account needed', '3 free/month', 'Cancel anytime'].map((item) => (
               <div key={item} className="flex items-center gap-1.5">
                 <CheckCircle2 className="h-4 w-4" />
                 {item}

@@ -79,7 +79,7 @@ export default function LoginPage() {
               <CardDescription>
                 {isLogin
                   ? 'Sign in to your TranscriptFlow account'
-                  : 'Start generating transcripts for free'}
+                  : 'Create your TranscriptFlow account'}
               </CardDescription>
             </CardHeader>
 
@@ -206,7 +206,7 @@ export default function LoginPage() {
                   onClick={() => setMode(isLogin ? 'signup' : 'login')}
                   className="text-[hsl(var(--primary))] font-medium hover:underline"
                 >
-                  {isLogin ? 'Sign up for free' : 'Sign in'}
+                  {isLogin ? 'Sign up' : 'Sign in'}
                 </button>
               </div>
             </CardContent>

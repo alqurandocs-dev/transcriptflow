@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 const navLinks = [
   { label: 'Home', href: '/' },
   { label: 'Transcript', href: '/transcript' },
+  { label: 'Pricing', href: '/pricing' },
 ]
 
 export default function Navbar() {
@@ -48,7 +49,7 @@ export default function Navbar() {
           {/* Desktop CTA */}
           <div className="hidden md:flex items-center gap-3">
             <Button size="sm" asChild>
-              <Link to="/transcript">Get started — it's free</Link>
+              <Link to="/transcript">Get started</Link>
             </Button>
           </div>
 
@@ -83,7 +84,7 @@ export default function Navbar() {
           ))}
           <div className="pt-2">
             <Button size="sm" className="w-full" asChild>
-              <Link to="/transcript" onClick={() => setMobileOpen(false)}>Get started — it's free</Link>
+              <Link to="/transcript" onClick={() => setMobileOpen(false)}>Get started</Link>
             </Button>
           </div>
         </div>
