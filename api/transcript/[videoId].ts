@@ -83,9 +83,44 @@ async function method2_timedtext(videoId: string): Promise<TranscriptSegment[]> 
   return Promise.any(attempts)
 }
 
-// ─── Method 3: Supadata (paid fallback, 100 req/month free) ──────────────────
+// ─── Method 3: RapidAPI YouTube Transcript (500 req/month free) ──────────────
 
-async function method3_supadata(videoId: string): Promise<TranscriptSegment[]> {
+async function method3_rapidapi(videoId: string): Promise<TranscriptSegment[]> {
+  const apiKey = process.env.RAPIDAPI_KEY
+  if (!apiKey) throw new Error('No RapidAPI key')
+
+  const res = await fetch(
+    `https://youtube-transcript3.p.rapidapi.com/api/transcript?videoId=${videoId}`,
+    {
+      headers: {
+        'x-rapidapi-host': 'youtube-transcript3.p.rapidapi.com',
+        'x-rapidapi-key': apiKey,
+      },
+      signal: AbortSignal.timeout(15_000),
+    }
+  )
+  if (res.status === 404) throw Object.assign(new Error('No transcript'), { code: 'NO_TRANSCRIPT' })
+  if (res.status === 429) throw Object.assign(new Error('Rate limited'), { code: 'RATE_LIMITED' })
+  if (!res.ok) throw new Error(`RapidAPI ${res.status}`)
+
+  const data = await res.json()
+
+  // Response can be array or object with transcript field
+  const items: Array<{ text?: string; start?: number; offset?: number; duration?: number }> =
+    Array.isArray(data) ? data : (data.transcript ?? data.content ?? [])
+
+  if (!items.length) throw Object.assign(new Error('Empty'), { code: 'NO_TRANSCRIPT' })
+
+  return items.map(s => ({
+    text: (s.text ?? '').trim(),
+    offset: Math.round((s.start ?? s.offset ?? 0) * (s.start !== undefined ? 1000 : 1)),
+    duration: Math.round(s.duration ?? 0),
+  })).filter(s => s.text)
+}
+
+// ─── Method 4: Supadata (100 req/month free — last resort) ───────────────────
+
+async function method4_supadata(videoId: string): Promise<TranscriptSegment[]> {
   const apiKey = process.env.SUPADATA_API_KEY
   if (!apiKey) throw Object.assign(new Error('No Supadata key'), { code: 'INTERNAL_ERROR' })
 
@@ -106,10 +141,10 @@ async function method3_supadata(videoId: string): Promise<TranscriptSegment[]> {
   return data.content.map(s => ({ text: s.text.trim(), offset: Math.round(s.offset), duration: Math.round(s.duration) }))
 }
 
-// ─── Orchestrator: run free methods in parallel, Supadata as last resort ─────
+// ─── Orchestrator ─────────────────────────────────────────────────────────────
 
 async function fetchTranscript(videoId: string): Promise<TranscriptSegment[]> {
-  // Step 1: Run both free methods in parallel — fastest wins
+  // Step 1: Free methods in parallel (unlimited)
   try {
     const result = await Promise.any([
       method1_youtubeTranscript(videoId),
@@ -118,11 +153,22 @@ async function fetchTranscript(videoId: string): Promise<TranscriptSegment[]> {
     console.log('[transcript] free method succeeded')
     return result
   } catch {
-    console.log('[transcript] free methods failed, trying Supadata')
+    console.log('[transcript] free methods failed, trying RapidAPI')
   }
 
-  // Step 2: Supadata fallback
-  return method3_supadata(videoId)
+  // Step 2: RapidAPI (500/month)
+  try {
+    const result = await method3_rapidapi(videoId)
+    console.log('[transcript] RapidAPI succeeded')
+    return result
+  } catch (err) {
+    const e = err as { code?: string }
+    if (e.code === 'NO_TRANSCRIPT') throw err
+    console.log('[transcript] RapidAPI failed, trying Supadata')
+  }
+
+  // Step 3: Supadata (100/month — last resort)
+  return method4_supadata(videoId)
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
