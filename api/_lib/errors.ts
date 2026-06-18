@@ -5,6 +5,7 @@ export type ApiErrorCode =
   | 'NO_TRANSCRIPT'
   | 'VIDEO_NOT_FOUND'
   | 'RATE_LIMITED'
+  | 'USAGE_LIMIT'
   | 'INTERNAL_ERROR'
   | 'METHOD_NOT_ALLOWED'
 
@@ -13,6 +14,7 @@ const STATUS_MAP: Record<ApiErrorCode, number> = {
   NO_TRANSCRIPT: 404,
   VIDEO_NOT_FOUND: 404,
   RATE_LIMITED: 429,
+  USAGE_LIMIT: 429,
   INTERNAL_ERROR: 500,
   METHOD_NOT_ALLOWED: 405,
 }

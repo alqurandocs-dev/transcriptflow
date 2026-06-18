@@ -17,6 +17,7 @@ export interface ApiError {
     | 'NO_TRANSCRIPT'
     | 'VIDEO_NOT_FOUND'
     | 'RATE_LIMITED'
+    | 'USAGE_LIMIT'
     | 'INTERNAL_ERROR'
     | 'METHOD_NOT_ALLOWED'
     | 'NETWORK_ERROR'

@@ -4,7 +4,7 @@ import {
   Copy, Search, Loader2, ArrowLeft, FileText, AlertCircle,
   WifiOff, VideoOff, MessageSquareOff, RefreshCw, FileDown,
   Clock, Sparkles, BookOpen, Brain, GraduationCap, PenLine,
-  Star, ChevronDown, AlignLeft, Scissors, Languages, MessageSquare,
+  Star, ChevronDown, AlignLeft, Scissors, Languages, MessageSquare, Lock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -47,6 +47,12 @@ const ERROR_CONFIG: Record<
     title: 'Too many requests',
     hint: 'YouTube is temporarily rate-limiting requests. Please wait a moment and try again.',
     retryable: true,
+  },
+  USAGE_LIMIT: {
+    icon: Lock,
+    title: 'Monthly limit reached',
+    hint: 'You have used all 3 free transcripts for this month. Upgrade to Pro for 50 transcripts/month.',
+    retryable: false,
   },
   INTERNAL_ERROR: {
     icon: AlertCircle,
@@ -136,12 +142,13 @@ function LoadingCard({ videoId }: { videoId: string }) {
 function ErrorCard({ error, videoId }: { error: ApiError; videoId: string }) {
   const cfg = ERROR_CONFIG[error.code] ?? ERROR_CONFIG.INTERNAL_ERROR
   const Icon = cfg.icon
+  const isUsageLimit = error.code === 'USAGE_LIMIT'
   return (
-    <Card className="shadow-sm border-red-200">
+    <Card className={`shadow-sm ${isUsageLimit ? 'border-orange-200' : 'border-red-200'}`}>
       <CardContent className="p-8 text-center">
         <div className="flex flex-col items-center gap-4 max-w-sm mx-auto">
-          <div className="w-14 h-14 rounded-full bg-red-50 flex items-center justify-center">
-            <Icon className="h-7 w-7 text-red-500" />
+          <div className={`w-14 h-14 rounded-full flex items-center justify-center ${isUsageLimit ? 'bg-orange-50' : 'bg-red-50'}`}>
+            <Icon className={`h-7 w-7 ${isUsageLimit ? 'text-orange-500' : 'text-red-500'}`} />
           </div>
           <div>
             <p className="font-semibold text-base mb-1">{cfg.title}</p>
@@ -153,15 +160,35 @@ function ErrorCard({ error, videoId }: { error: ApiError; videoId: string }) {
                 <RefreshCw className="h-3.5 w-3.5" /> Retry
               </Button>
             )}
-            <Button size="sm" variant="default" asChild className="gap-1.5">
-              <Link to="/transcript">
-                <ArrowLeft className="h-3.5 w-3.5" /> Try another video
-              </Link>
-            </Button>
+            {isUsageLimit ? (
+              <>
+                <Button size="sm" variant="default" asChild className="gap-1.5">
+                  <Link to="/pricing">Upgrade to Pro</Link>
+                </Button>
+                <Button size="sm" variant="outline" asChild className="gap-1.5">
+                  <a href="mailto:sendtomicrovex@gmail.com?subject=TranscriptFlow Pro Upgrade">
+                    Contact us
+                  </a>
+                </Button>
+              </>
+            ) : (
+              <Button size="sm" variant="default" asChild className="gap-1.5">
+                <Link to="/transcript">
+                  <ArrowLeft className="h-3.5 w-3.5" /> Try another video
+                </Link>
+              </Button>
+            )}
           </div>
-          <p className="text-xs text-[hsl(var(--muted-foreground))] font-mono opacity-60">
-            {videoId} · {error.code}
-          </p>
+          {isUsageLimit && (
+            <p className="text-xs text-[hsl(var(--muted-foreground))]">
+              Limit resets on the 1st of next month.
+            </p>
+          )}
+          {!isUsageLimit && (
+            <p className="text-xs text-[hsl(var(--muted-foreground))] font-mono opacity-60">
+              {videoId} · {error.code}
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>

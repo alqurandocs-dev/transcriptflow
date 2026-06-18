@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { YoutubeTranscript } from 'youtube-transcript'
 import { sendError, setCors } from '../_lib/errors'
+import { checkLimit, recordUsage } from '../_lib/rateLimit'
 
 const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/
 
@@ -306,6 +307,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return sendError(res, 'INVALID_VIDEO_ID', 'Invalid video ID.')
   }
 
+  // Check IP-based rate limit
+  const { allowed, remaining } = await checkLimit(req)
+  if (!allowed) {
+    return sendError(res, 'USAGE_LIMIT', `You have reached the free limit of 3 transcripts per month. Upgrade to Pro for more.`)
+  }
+
   // Fetch meta and transcript in parallel to save time
   const [metaResult, transcriptResult] = await Promise.allSettled([
     fetchVideoMeta(videoId),
@@ -326,7 +333,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return sendError(res, 'INTERNAL_ERROR', 'Failed to fetch transcript. Please try again.')
   }
 
+  // Record successful usage against the IP
+  await recordUsage(req)
+
   res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400')
+  res.setHeader('X-RateLimit-Remaining', String(remaining - 1))
   return res.status(200).json({
     title: metaResult.value.title,
     channel: metaResult.value.channel,
