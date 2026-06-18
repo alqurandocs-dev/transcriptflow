@@ -32,12 +32,24 @@ export async function fetchTranscript(
 ): Promise<ApiResult<TranscriptResponse>> {
   try {
     const res = await fetch(`/api/transcript/${encodeURIComponent(videoId)}`)
+
+    const contentType = res.headers.get('content-type') ?? ''
+    if (!contentType.includes('application/json')) {
+      return {
+        ok: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: `Server error (${res.status}). Please try again later.`,
+        },
+      }
+    }
+
     const body = await res.json()
 
     if (!res.ok) {
       return {
         ok: false,
-        error: body.error as ApiError,
+        error: (body as { error: ApiError }).error,
       }
     }
 
