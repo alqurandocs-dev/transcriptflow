@@ -37,31 +37,36 @@ async function fetchVideoMeta(videoId: string): Promise<VideoMeta> {
 }
 
 // Use YouTube's internal player API to get caption tracks
+// iOS client context bypasses datacenter IP restrictions that block the WEB client
 async function fetchCaptionTracks(videoId: string): Promise<Array<{ baseUrl: string; languageCode: string; kind?: string }>> {
-  const res = await fetch('https://www.youtube.com/youtubei/v1/player', {
-    method: 'POST',
-    headers: {
-      ...BASE_HEADERS,
-      'Content-Type': 'application/json',
-      'X-YouTube-Client-Name': '1',
-      'X-YouTube-Client-Version': '2.9999099',
-      'Origin': 'https://www.youtube.com',
-      'Referer': `https://www.youtube.com/watch?v=${videoId}`,
-    },
-    body: JSON.stringify({
-      videoId,
-      context: {
-        client: {
-          clientName: 'WEB',
-          clientVersion: '2.9999099',
-          hl: 'en',
-          gl: 'US',
-          userAgent: BASE_HEADERS['User-Agent'],
-        },
+  const res = await fetch(
+    'https://www.youtube.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUA',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'com.google.ios.youtube/17.33.2 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)',
+        'X-YouTube-Client-Name': '5',
+        'X-YouTube-Client-Version': '17.33.2',
       },
-    }),
-    signal: AbortSignal.timeout(15_000),
-  })
+      body: JSON.stringify({
+        videoId,
+        context: {
+          client: {
+            clientName: 'IOS',
+            clientVersion: '17.33.2',
+            deviceMake: 'Apple',
+            deviceModel: 'iPhone14,3',
+            osName: 'iPhone',
+            osVersion: '15.6.0.19G71',
+            hl: 'en',
+            gl: 'US',
+          },
+        },
+      }),
+      signal: AbortSignal.timeout(15_000),
+    }
+  )
 
   if (!res.ok) throw Object.assign(new Error(`player API ${res.status}`), { code: 'INTERNAL_ERROR' })
 
