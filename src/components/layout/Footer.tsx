@@ -77,7 +77,8 @@ export default function Footer() {
             © {new Date().getFullYear()} TranscriptFlow. All rights reserved.
           </p>
           <p className="text-sm text-[hsl(var(--muted-foreground))]">
-            Made with ❤️ for content creators
+            Made by{' '}
+            <span className="font-medium text-[hsl(var(--foreground))]">Microvex</span>
           </p>
         </div>
       </div>
