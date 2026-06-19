@@ -31,7 +31,7 @@ export default function Navbar() {
     <header className="sticky top-0 z-50 w-full">
       {/* Trial announcement banner */}
       <div className="w-full bg-[hsl(var(--primary))] text-white text-center text-xs py-2 px-4">
-        🚧 এই app টি এখন <strong>trial</strong> চলছে — তাই login করতে হচ্ছে। সম্পূর্ণ live হলে কোনো account ছাড়াই transcript generate করা যাবে।
+        🚧 This app is currently in <strong>trial</strong> — login is required for now. Once fully live, transcripts will be free with no account needed.
       </div>
       <div className="border-b border-[hsl(var(--border))] bg-[hsl(var(--background))]/95 backdrop-blur supports-[backdrop-filter]:bg-[hsl(var(--background))]/60">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
